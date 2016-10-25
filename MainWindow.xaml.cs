@@ -18,8 +18,15 @@ namespace PolarisBiosEditor
     {
         Byte[] buffer;
         Int32Converter int32 = new Int32Converter();
+        UInt32Converter uint32 = new UInt32Converter();
         string[] supportedDeviceID = new string[] { "67DF", "1002" };
         string deviceID = "";
+        private string openedFile;
+        private bool bMultiVRAM = false;
+
+        const int MAX_VRAM_ENTRIES = 24;
+
+        string TOOL_VERSION = "1.4.1 - Epsylon3";
 
         int atom_rom_checksum_offset = 0x21;
         int atom_rom_header_ptr = 0x48;
@@ -314,8 +321,10 @@ namespace PolarisBiosEditor
             public UInt32 ulChannelMapCfg1;
             public UInt32 ulBankMapCfg;
             public UInt32 ulReserved;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 12)]
             public Byte[] strMemPNString;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
+            public Byte[] strMemPNXT;
         };
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -380,7 +389,7 @@ namespace PolarisBiosEditor
         public MainWindow()
         {
             InitializeComponent();
-            MainWindow.GetWindow(this).Title += " 1.4";
+            MainWindow.GetWindow(this).Title += " " + TOOL_VERSION;
 
             save.IsEnabled = false;
             boxROM.IsEnabled = false;
@@ -413,8 +422,10 @@ namespace PolarisBiosEditor
                 tableVRAM.Items.Clear();
                 tableVRAM_TIMING.Items.Clear();
 
+                openedFile = openFileDialog.FileName;
+                txtCrcOk.Visibility = fixCRC.Visibility = Visibility.Hidden;
                 System.IO.Stream fileStream = openFileDialog.OpenFile();
-                if (fileStream.Length < 524288) {
+                if (fileStream.Length < 524288/2) {
                     MessageBox.Show("This BIOS is less than the standard 512KB size.\nFlashing this BIOS may corrupt your graphics card.", "WARNING", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
                 using (BinaryReader br = new BinaryReader(fileStream)) {
@@ -469,9 +480,13 @@ namespace PolarisBiosEditor
                             atom_vram_entries[i] = fromBytes<ATOM_VRAM_ENTRY>(buffer.Skip(atom_vram_entry_offset).ToArray());
                             atom_vram_entry_offset += atom_vram_entries[i].usModuleSize;
                         }
-                        atom_vram_timing_entries = new ATOM_VRAM_TIMING_ENTRY[16];
-                        for (var i = 0; i < 16; i++) {
-                            atom_vram_timing_entries[i] = fromBytes<ATOM_VRAM_TIMING_ENTRY>(buffer.Skip(atom_vram_entry_offset + 0x3D + Marshal.SizeOf(typeof(ATOM_VRAM_TIMING_ENTRY))*i).ToArray());
+                        //lbRamNotes.Content = (atom_vram_info.ucNumOfVRAMModule).ToString() + " VRAM tables";
+                        bMultiVRAM = (atom_vram_info.ucNumOfVRAMModule >= 3);
+                        atom_vram_timing_entries = new ATOM_VRAM_TIMING_ENTRY[MAX_VRAM_ENTRIES];
+                        for (var i = 0; i < MAX_VRAM_ENTRIES; i++) {
+                            int offset = atom_vram_entry_offset + 0x3D;
+                            if (bMultiVRAM) offset = atom_vram_entry_offset + 0xC0;
+                            atom_vram_timing_entries[i] = fromBytes<ATOM_VRAM_TIMING_ENTRY>(buffer.Skip(offset + Marshal.SizeOf(typeof(ATOM_VRAM_TIMING_ENTRY)) * i).ToArray());
 
                             // atom_vram_timing_entries have an undetermined length
                             // attempt to determine the last entry in the array
@@ -611,15 +626,20 @@ namespace PolarisBiosEditor
 
                         listVRAM.Items.Clear();
                         for (var i = 0; i < atom_vram_info.ucNumOfVRAMModule; i++) {
-                            listVRAM.Items.Add(Encoding.UTF8.GetString(atom_vram_entries[i].strMemPNString));
+                            string str = System.Text.Encoding.UTF8.GetString(atom_vram_entries[i].strMemPNString);
+                            if (atom_vram_entries[i].strMemPNString[0] == 0)
+                                listVRAM.Items.Add("<" + (atom_vram_entries.Length-1).ToString() + " brands>");
+                            else
+                                listVRAM.Items.Add(str.Substring(0,10));
                         }
                         listVRAM.SelectedIndex = 0;
                         atom_vram_index = listVRAM.SelectedIndex;
 
                         tableVRAM_TIMING.Items.Clear();
                         for (var i = 0; i < atom_vram_timing_entries.Length; i++) {
+                            uint tbl = atom_vram_timing_entries[i].ulClkRange >> 24;
                             tableVRAM_TIMING.Items.Add(new {
-                                MHZ = atom_vram_timing_entries[i].ulClkRange / 100,
+                                MHZ = tbl.ToString() + ":" + (atom_vram_timing_entries[i].ulClkRange & 0x00FFFFFF) / 100,
                                 VALUE = ByteArrayToString(atom_vram_timing_entries[i].ucLatency)
                             });
                         }
@@ -826,10 +846,15 @@ namespace PolarisBiosEditor
                     var container = tableVRAM_TIMING.ItemContainerGenerator.ContainerFromIndex(i) as FrameworkElement;
                     var name = (FindByName("MHZ", container) as TextBlock).Text;
                     var value = (FindByName("VALUE", container) as TextBox).Text;
-                    var mhz = (int)int32.ConvertFromString(name) * 100;
                     var arr = StringToByteArray(value);
-
-                    atom_vram_timing_entries[i].ulClkRange = (UInt32)mhz;
+                    UInt32 mhz;
+                    if (name.IndexOf(':') > 0) {
+                        mhz =  (UInt32)uint32.ConvertFromString(name.Substring(name.IndexOf(':')+1)) * 100;
+                        mhz += (UInt32)uint32.ConvertFromString(name.Substring(0, name.IndexOf(':'))) << 24; // table id
+                    } else {
+                        mhz =  (UInt32)uint32.ConvertFromString(name) * 100;
+                    }
+                    atom_vram_timing_entries[i].ulClkRange = mhz;
                     atom_vram_timing_entries[i].ucLatency = arr;
                 }
 
@@ -856,7 +881,9 @@ namespace PolarisBiosEditor
                     atom_vram_entry_offset += atom_vram_entries[i].usModuleSize;
                 }
                 for (var i = 0; i < atom_vram_timing_entries.Length; i++) {
-                    setBytesAtPosition(buffer, atom_vram_entry_offset + 0x3D + Marshal.SizeOf(typeof(ATOM_VRAM_TIMING_ENTRY))*i, getBytes(atom_vram_timing_entries[i]));
+                    int offset = atom_vram_entry_offset + 0x3D;
+                    if (bMultiVRAM) offset = atom_vram_entry_offset + 0xC0;
+                    setBytesAtPosition(buffer, offset + Marshal.SizeOf(typeof(ATOM_VRAM_TIMING_ENTRY)) * i, getBytes(atom_vram_timing_entries[i]));
                 }
 
                 fixChecksum(true);
@@ -876,17 +903,40 @@ namespace PolarisBiosEditor
             for (int i = 0; i < size; i++) {
                 offset += buffer[i];
             }
+
             if (checksum == (buffer[atom_rom_checksum_offset] - offset)) {
                 txtChecksum.Foreground = Brushes.Green;
             } else if (!save) {
                 txtChecksum.Foreground = Brushes.Red;
-                MessageBox.Show("Invalid checksum - Save to fix!", "WARNING", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Byte goodCSum = (Byte)(buffer[atom_rom_checksum_offset] - offset);
+                txtCrcOk.Foreground = Brushes.Green;
+                txtCrcOk.Text = "0x" + goodCSum.ToString("X");
+                txtCrcOk.Visibility = fixCRC.Visibility = Visibility.Visible;
+                MessageBox.Show("Invalid checksum detected!", "WARNING", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             if (save) {
                 buffer[atom_rom_checksum_offset] -= offset;
                 txtChecksum.Foreground = Brushes.Green;
             }
             txtChecksum.Text = "0x" + buffer[atom_rom_checksum_offset].ToString("X");
+        }
+
+        private void fixCRC_Click(object sender, RoutedEventArgs e)
+        {
+            fixChecksum(true);
+            FileStream fs = new FileStream(openedFile, FileMode.Create);
+            try {
+                BinaryWriter bw = new BinaryWriter(fs);
+                bw.Write(buffer);
+                bw.Close();
+            } catch(Exception ex) {
+                fs.Close();
+                MessageBox.Show("Unable to save :(", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            } finally {
+                fs.Close();
+                fixCRC.Visibility = txtCrcOk.Visibility = Visibility.Hidden;
+                MessageBox.Show("File saved!", "INFO", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+            }
         }
 
         private FrameworkElement FindByName(string name, FrameworkElement root)
