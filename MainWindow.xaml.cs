@@ -23,9 +23,11 @@ namespace PolarisBiosEditor
         string deviceID = "";
         private string openedFile;
         private bool bMultiVRAM = false;
+        private UInt32 blkCRC32;
 
         const int MAX_VRAM_ENTRIES = 32;
-        const string TOOL_VERSION = "1.4.2 - Epsylon3";
+        const string TOOL_VERSION = "1.4.2";
+        const string TOOL_VERSION_EXTRA = " - Epsylon3";
 
         int atom_rom_checksum_offset = 0x21;
         int atom_rom_header_ptr = 0x48;
@@ -59,6 +61,8 @@ namespace PolarisBiosEditor
         ATOM_VRAM_ENTRY[] atom_vram_entries;
         ATOM_VRAM_TIMING_ENTRY[] atom_vram_timing_entries;
         int atom_vram_index = 0;
+
+        // http://lxr.free-electrons.com/source/drivers/gpu/drm/amd/include/atombios.h#L200
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
         unsafe struct ATOM_COMMON_TABLE_HEADER
@@ -389,7 +393,7 @@ namespace PolarisBiosEditor
         {
             InitializeComponent();
             MainWindow.GetWindow(this).Tag = MainWindow.GetWindow(this).Title;
-            MainWindow.GetWindow(this).Title += " " + TOOL_VERSION;
+            MainWindow.GetWindow(this).Title += " " + TOOL_VERSION + TOOL_VERSION_EXTRA;
 
             save.IsEnabled = false;
             boxROM.IsEnabled = false;
@@ -433,7 +437,9 @@ namespace PolarisBiosEditor
                         "WARNING", MessageBoxButton.OK, MessageBoxImage.Warning
                     );
                 }
-                using (BinaryReader br = new BinaryReader(fileStream)) {
+
+                using (BinaryReader br = new BinaryReader(fileStream))
+                {
                     buffer = br.ReadBytes((int)fileStream.Length);
 
                     atom_rom_header_offset = getValueAtPosition(16, atom_rom_header_ptr);
@@ -522,10 +528,6 @@ namespace PolarisBiosEditor
                         {
                             NAME = "Sub PID",
                             VALUE = "0x" + atom_rom_header.usSubsystemPID.ToString("X")
-                        });
-                        tableROM.Items.Add(new {
-                            NAME = "Signature",
-                            VALUE = "0x" + atom_rom_header.uaFirmWareSignature.ToString("X")
                         });
 
                         tablePOWERPLAY.Items.Clear();
@@ -622,7 +624,8 @@ namespace PolarisBiosEditor
                         for (var i = 0; i < atom_sclk_table.ucNumEntries; i++) {
                             tableGPU.Items.Add(new {
                                 MHZ = atom_sclk_entries[i].ulSclk / 100,
-                                MV = atom_vddc_entries[atom_sclk_entries[i].ucVddInd].usVdd
+                                MV = atom_vddc_entries[atom_sclk_entries[i].ucVddInd].usVdd,
+                                TT = ("0x" + atom_vddc_entries[atom_sclk_entries[i].ucVddInd].usVdd.ToString("X"))
                             });
                         }
 
@@ -630,7 +633,8 @@ namespace PolarisBiosEditor
                         for (var i = 0; i < atom_mclk_table.ucNumEntries; i++) {
                             tableMEMORY.Items.Add(new {
                                 MHZ = atom_mclk_entries[i].ulMclk / 100,
-                                MV = atom_mclk_entries[i].usMvdd
+                                MV = atom_mclk_entries[i].usMvdd,
+                                TT = ("0x" + atom_mclk_entries[i].usMvdd.ToString("X"))
                             });
                         }
 
@@ -678,14 +682,17 @@ namespace PolarisBiosEditor
                         // highlight the fact there is a second CRC in the file..
                         if (atom_rom_header.usCRC_BlockOffset > 0) {
                             uint crc32 = 0;
-                            for (int i = 0; i < 4; i++) {
+                            for (int i = 3; i >= 0; i--) {
                                 crc32 = crc32 << 8;
                                 crc32 |= buffer[atom_rom_header.usCRC_BlockOffset + i];
                             }
-                            lbDesc.Content += " CRC32: " + crc32.ToString("X");
+                            blkCRC32 = crc32;
+                            lbDesc.Content += " BLOCK CRC " + crc32.ToString("X");
                         }
                     }
                     fileStream.Close();
+
+                    //findCRC(buffer, atom_rom_header.usMasterCommandTableOffset);
                 }
             }
         }
@@ -778,8 +785,6 @@ namespace PolarisBiosEditor
                         atom_rom_header.usSubsystemVID = (UInt16)num;
                     } else if (name == "Sub PID") {
                         atom_rom_header.usSubsystemPID = (UInt16)num;
-                    } else if (name == "Signature") {
-                        atom_rom_header.uaFirmWareSignature = (UInt32)num;
                     }
                 }
 
@@ -1055,6 +1060,23 @@ namespace PolarisBiosEditor
                     NAME = "Type",
                     VALUE = "0x" + atom_vram_entries[atom_vram_index].ucMemoryType.ToString("X")
                 });
+            }
+        }
+
+        /**
+         * Attempt to find a match for the CRC32...
+         */
+        private void findCRC(byte[] buf, int skip)
+        {
+            int len = buf.Length - skip;
+            string block = System.Text.Encoding.ASCII.GetString(buf.Skip(skip).ToArray());
+            for (int b = len; b > 0; b--)
+            {
+                uint crc32 = CRC32.crc32_to(block, b);
+                if (crc32 == blkCRC32) {
+                    MessageBox.Show("Found exact CRC " + crc32.ToString("X") + " at 0x" + skip.ToString("X") + " with len " + b.ToString(), "CRC32 SEEK");
+                    break;
+                }
             }
         }
     }

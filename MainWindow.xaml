@@ -163,7 +163,7 @@
                                         <ColumnDefinition />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="MHZ" Text="{Binding MHZ, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="0"/>
-                                    <TextBox x:Name="MV" Text="{Binding MV, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="1"/>
+                                    <TextBox x:Name="MV" Text="{Binding MV, Mode=OneWay}" ToolTip="{Binding TT, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="1"/>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -195,7 +195,7 @@
                                         <ColumnDefinition />
                                     </Grid.ColumnDefinitions>
                                     <TextBox x:Name="MHZ" Text="{Binding MHZ, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="0"/>
-                                    <TextBox x:Name="MV" Text="{Binding MV, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="1"/>
+                                    <TextBox x:Name="MV" Text="{Binding MV, Mode=OneWay}" ToolTip="{Binding TT, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="1"/>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
@@ -257,7 +257,7 @@
                                         <ColumnDefinition Width="3*" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock x:Name="MHZ" Text="{Binding MHZ, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="0"/>
-                                    <TextBox x:Name="VALUE" Text="{Binding VALUE, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="1"/>
+                                    <TextBox x:Name="VALUE" Text="{Binding VALUE, Mode=OneWay}" ToolTip="{Binding VALUE, Mode=OneWay}" FontSize="10" TextAlignment="Center" Grid.Column="1"/>
                                 </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
