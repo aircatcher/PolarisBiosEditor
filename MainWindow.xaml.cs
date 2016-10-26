@@ -24,9 +24,8 @@ namespace PolarisBiosEditor
         private string openedFile;
         private bool bMultiVRAM = false;
 
-        const int MAX_VRAM_ENTRIES = 24;
-
-        string TOOL_VERSION = "1.4.1 - Epsylon3";
+        const int MAX_VRAM_ENTRIES = 32;
+        const string TOOL_VERSION = "1.4.2 - Epsylon3";
 
         int atom_rom_checksum_offset = 0x21;
         int atom_rom_header_ptr = 0x48;
@@ -82,8 +81,8 @@ namespace PolarisBiosEditor
             public UInt16 usInt10Offset;
             public UInt16 usPciBusDevInitCode;
             public UInt16 usIoBaseAddress;
-            public UInt16 usSubsystemVendorID;
-            public UInt16 usSubsystemID;
+            public UInt16 usSubsystemVID;
+            public UInt16 usSubsystemPID;
             public UInt16 usPCI_InfoOffset;
             public UInt16 usMasterCommandTableOffset;
             public UInt16 usMasterDataTableOffset;
@@ -91,7 +90,7 @@ namespace PolarisBiosEditor
             public Byte ucReserved;
             public UInt32 ulPSPDirTableOffset;
             public UInt16 usVendorID;
-            public UInt16 usDeviceID;
+            public UInt16 usProductID;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -389,6 +388,7 @@ namespace PolarisBiosEditor
         public MainWindow()
         {
             InitializeComponent();
+            MainWindow.GetWindow(this).Tag = MainWindow.GetWindow(this).Title;
             MainWindow.GetWindow(this).Title += " " + TOOL_VERSION;
 
             save.IsEnabled = false;
@@ -423,22 +423,30 @@ namespace PolarisBiosEditor
                 tableVRAM_TIMING.Items.Clear();
 
                 openedFile = openFileDialog.FileName;
+                MainWindow.GetWindow(this).Title = MainWindow.GetWindow(this).Tag + " " + TOOL_VERSION + " - " + openFileDialog.SafeFileName;
                 txtCrcOk.Visibility = fixCRC.Visibility = Visibility.Hidden;
+
                 System.IO.Stream fileStream = openFileDialog.OpenFile();
-                if (fileStream.Length < 524288/2) {
-                    MessageBox.Show("This BIOS is less than the standard 512KB size.\nFlashing this BIOS may corrupt your graphics card.", "WARNING", MessageBoxButton.OK, MessageBoxImage.Warning);
+                if (fileStream.Length != 0x40000 && fileStream.Length != 0x80000) { // 256kB (gpu-z) or 512kB (atiflash)
+                    MessageBox.Show(
+                        "This BIOS is not at the standard 256KB/512KB sizes.\nFlashing this BIOS may corrupt your graphics card.",
+                        "WARNING", MessageBoxButton.OK, MessageBoxImage.Warning
+                    );
                 }
                 using (BinaryReader br = new BinaryReader(fileStream)) {
                     buffer = br.ReadBytes((int)fileStream.Length);
 
                     atom_rom_header_offset = getValueAtPosition(16, atom_rom_header_ptr);
                     atom_rom_header = fromBytes<ATOM_ROM_HEADER>(buffer.Skip(atom_rom_header_offset).ToArray());
-                    deviceID = atom_rom_header.usDeviceID.ToString("X");
+                    deviceID = atom_rom_header.usProductID.ToString("X");
                     fixChecksum(false);
 
                     MessageBoxResult msgSuported = MessageBoxResult.Yes;
                     if (!supportedDeviceID.Contains(deviceID)) {
                         msgSuported = MessageBox.Show("Unsupported DeviceID 0x" + deviceID + " - Continue?", "WARNING", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                    }
+                    if (msgSuported == MessageBoxResult.Yes && atom_rom_header.uaFirmWareSignature != 0x4d4f5441) {
+                        msgSuported = MessageBox.Show("Unsupported Firmware signature - Continue?", "WARNING", MessageBoxButton.YesNo, MessageBoxImage.Warning);
                     }
                     if (msgSuported == MessageBoxResult.Yes) {
                         atom_data_table = fromBytes<ATOM_DATA_TABLES>(buffer.Skip(atom_rom_header.usMasterDataTableOffset).ToArray());
@@ -502,19 +510,21 @@ namespace PolarisBiosEditor
                             VALUE = "0x" + atom_rom_header.usVendorID.ToString("X")
                         });
                         tableROM.Items.Add(new {
-                            NAME = "DeviceID",
-                            VALUE = "0x" + atom_rom_header.usDeviceID.ToString("X")
+                            NAME = "ProductID",
+                            VALUE = "0x" + atom_rom_header.usProductID.ToString("X")
+                        });
+                        tableROM.Items.Add(new
+                        {
+                            NAME = "Sub VID",
+                            VALUE = "0x" + atom_rom_header.usSubsystemVID.ToString("X")
+                        });
+                        tableROM.Items.Add(new
+                        {
+                            NAME = "Sub PID",
+                            VALUE = "0x" + atom_rom_header.usSubsystemPID.ToString("X")
                         });
                         tableROM.Items.Add(new {
-                            NAME = "Sub ID",
-                            VALUE = "0x" + atom_rom_header.usSubsystemID.ToString("X")
-                        });
-                        tableROM.Items.Add(new {
-                            NAME = "Sub VendorID",
-                            VALUE = "0x" + atom_rom_header.usSubsystemVendorID.ToString("X")
-                        });
-                        tableROM.Items.Add(new {
-                            NAME = "Firmware Signature",
+                            NAME = "Signature",
                             VALUE = "0x" + atom_rom_header.uaFirmWareSignature.ToString("X")
                         });
 
@@ -652,6 +662,28 @@ namespace PolarisBiosEditor
                         boxGPU.IsEnabled = true;
                         boxMEM.IsEnabled = true;
                         boxVRAM.IsEnabled = true;
+
+                        // Some BIOS attributes to describe the file
+                        lbDesc.Content = "";
+                        if (atom_rom_header.usConfigFilenameOffset > 0) {
+                            byte[] bfn = new byte[12];
+                            for (int i = 0; i < 12; i++) bfn[i] = buffer[atom_rom_header.usConfigFilenameOffset + i];
+                            lbDesc.Content += " " + System.Text.Encoding.ASCII.GetString(bfn);
+                        }
+                        if (atom_rom_header.usBIOS_BootupMessageOffset > 0) {
+                            byte[] bbm = new byte[64];
+                            for (int i = 0; i < 64; i++) bbm[i] = buffer[atom_rom_header.usBIOS_BootupMessageOffset + 2 + i];
+                            lbDesc.Content += " " + System.Text.Encoding.ASCII.GetString(bbm);
+                        }
+                        // highlight the fact there is a second CRC in the file..
+                        if (atom_rom_header.usCRC_BlockOffset > 0) {
+                            uint crc32 = 0;
+                            for (int i = 0; i < 4; i++) {
+                                crc32 = crc32 << 8;
+                                crc32 |= buffer[atom_rom_header.usCRC_BlockOffset + i];
+                            }
+                            lbDesc.Content += " CRC32: " + crc32.ToString("X");
+                        }
                     }
                     fileStream.Close();
                 }
@@ -740,13 +772,13 @@ namespace PolarisBiosEditor
 
                     if (name == "VendorID") {
                         atom_rom_header.usVendorID = (UInt16)num;
-                    } else if (name == "DeviceID") {
-                        atom_rom_header.usDeviceID = (UInt16)num;
-                    } else if (name == "Sub ID") {
-                        atom_rom_header.usSubsystemID = (UInt16)num;
-                    } else if (name == "Sub VendorID") {
-                        atom_rom_header.usSubsystemVendorID = (UInt16)num;
-                    } else if (name == "Firmware Signature") {
+                    } else if (name == "ProductID") {
+                        atom_rom_header.usProductID = (UInt16)num;
+                    } else if (name == "Sub VID") {
+                        atom_rom_header.usSubsystemVID = (UInt16)num;
+                    } else if (name == "Sub PID") {
+                        atom_rom_header.usSubsystemPID = (UInt16)num;
+                    } else if (name == "Signature") {
                         atom_rom_header.uaFirmWareSignature = (UInt32)num;
                     }
                 }

@@ -265,6 +265,6 @@
                 </Grid>
             </Grid>
         </GroupBox>
-
+        <Label x:Name="lbDesc" Margin="500,10,18,0" Height="26" VerticalAlignment="Top" Width="484" HorizontalAlignment="Center" FontSize="10"  />
     </Grid>
 </Window>
